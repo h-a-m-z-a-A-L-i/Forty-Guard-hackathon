@@ -17,7 +17,17 @@ async function submitEnvParams(lat, lng, temperature, opts) {
 }
 async function pollResult(activityId, { maxAttempts = 40, intervalMs = 2500 } = {}) {
   for (let i = 0; i < maxAttempts; i++) {
-    const res = await axios.get(`${BASE}/status/${activityId}`, { headers: headers(), timeout: 30000 });
+    let res;
+    try {
+      res = await axios.get(`${BASE}/status/${activityId}`, { headers: headers(), timeout: 30000 });
+    } catch (e) {
+      // Transient "Activity not found" (404) — the activity may not be registered yet.
+      if (e.response?.status === 404 && i < maxAttempts - 1) {
+        await new Promise(resolve => setTimeout(resolve, intervalMs));
+        continue;
+      }
+      throw e;
+    }
     const status = res.data?.data?.status;
     if (status === 'Completed') return res.data.data.result;
     if (status === 'Failed') throw new Error(`FortyGuard activity failed: ${res.data?.message || activityId}`);

@@ -21,10 +21,27 @@ if (!API_KEY) {
 console.log('✅ FortyGuard API key configured');
 app.use(express.static(frontendDist));
 const pad = n => String(n).padStart(2, '0');
-function dateTime(value) { const d = value ? new Date(value) : new Date(); if (Number.isNaN(d.getTime())) throw new Error('Invalid atTime'); return { startDate: `${d.getUTCFullYear()}-${pad(d.getUTCMonth()+1)}-${pad(d.getUTCDate())}`, startTime: `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}` }; }
+function dateTime(value) {
+  const d = value ? new Date(value) : new Date();
+  if (Number.isNaN(d.getTime())) throw new Error('Invalid atTime');
+  // FortyGuard granularity=60 expects a whole-hour start_time; round down to the hour.
+  d.setUTCMinutes(0, 0, 0);
+  return { startDate: `${d.getUTCFullYear()}-${pad(d.getUTCMonth()+1)}-${pad(d.getUTCDate())}`, startTime: `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}` };
+}
 function metric(result, key) {
-  const direct = Number(result?.stats_data?.Temperature_stats?.[key]);
-  if (Number.isFinite(direct)) return direct;
+  // Three real FortyGuard response shapes:
+  //   1. plan docs:      stats_data.Temperature_stats.Mean
+  //   2. tcm API:        stats_data.temperature_stats.mean
+  //   3. exceedance API: stats_data.mean  (direct keys min/max/mean)
+  const directStats = result?.stats_data || {};
+  const nested = directStats.Temperature_stats || directStats.temperature_stats || {};
+  const keyMap = { Mean: ['mean', 'Mean'], Minimum: ['minimum', 'Minimum', 'min'], Maximum: ['maximum', 'Maximum', 'max'] };
+  for (const source of [nested, directStats]) {
+    for (const candidate of keyMap[key] || []) {
+      const v = Number(source?.[candidate]);
+      if (Number.isFinite(v)) return v;
+    }
+  }
   const field = { Mean: 'average_temperature', Minimum: 'min_temperature', Maximum: 'max_temperature' }[key];
   const values = result?.map_data?.features?.map(feature => Number(feature?.properties?.[field])).filter(Number.isFinite) || [];
   if (!values.length) return null;
@@ -72,8 +89,7 @@ app.post('/api/compare-routes', async (req, res) => {
       const corridor = routeToCorridor(route.geometry); const common = { startDate, startTime, filterType: 1, granularity: 60 };
       const tcm = await pollResult(await submitHeatmap(corridor, { ...common, analyticType: 'tcm' }));
       let hoursAboveThreshold = null; try { const ex = await pollResult(await submitHeatmap(corridor, { startDate, filterType: 3, granularity: 60, analyticType: 'exceedance', threshold: 35, direction: 'above' })); hoursAboveThreshold = metric(ex, 'Mean'); } catch (e) { console.warn('Exceedance failed:', e.message); }
-      return { routeId, geometry: route.geometry, durationSeconds: route.duration, distanceMeters: route.distance, avgTemp: metric(tcm, 'Mean'), maxTemp: metric(tcm, 'Maximum'), hoursAboveThreshold };
-    }));
+      return { routeId, geometry: route.geometry, durationSeconds: route.duration, distanceMeters: route.distance, avgTemp: metric(tcm, 'Mean'), maxTemp: metric(tcm, 'Maximum'), hoursAboveThreshold };    }));
     const coolest = enriched.reduce((a,b) => (a.avgTemp == null ? b : b.avgTemp == null ? a : a.avgTemp < b.avgTemp ? a : b)); let feelsLike = null;
     try { const mid = routeMidpoint(routes[coolest.routeId].geometry); const env = await pollResult(await submitEnvParams(mid.lat, mid.lng, coolest.avgTemp, { startDate, startTime, analysis: ['heat_index_celsius','apparent_temperature_celsius','relative_humidity_percent'] })); feelsLike = env?.locations?.[0]?.parameters || null; } catch (e) { console.warn('Feels-like failed:', e.message); }
     res.json({ routes: enriched, coolestRouteId: coolest.routeId, feelsLike, analyzedAt: { startDate, startTime } });
