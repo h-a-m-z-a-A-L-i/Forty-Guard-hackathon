@@ -11,6 +11,14 @@ const { routeToCorridor, routeMidpoint } = require('./lib/corridor'); const { ge
 const app = express(); app.use(cors()); app.use(express.json());
 const API_KEY = process.env.FORTYGUARD_API_KEY || process.env.api;
 const frontendDist = path.resolve(__dirname, '../frontend/dist');
+
+// Validate API key on startup
+if (!API_KEY) {
+  console.error('❌ ERROR: FORTYGUARD_API_KEY not found in backend/.env');
+  console.error('Please create backend/.env with: FORTYGUARD_API_KEY=your_key_here');
+  process.exit(1);
+}
+console.log('✅ FortyGuard API key configured');
 app.use(express.static(frontendDist));
 const pad = n => String(n).padStart(2, '0');
 function dateTime(value) { const d = value ? new Date(value) : new Date(); if (Number.isNaN(d.getTime())) throw new Error('Invalid atTime'); return { startDate: `${d.getUTCFullYear()}-${pad(d.getUTCMonth()+1)}-${pad(d.getUTCDate())}`, startTime: `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}` }; }
@@ -23,11 +31,42 @@ function metric(result, key) {
   return key === 'Minimum' ? Math.min(...values) : key === 'Maximum' ? Math.max(...values) : values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 app.get('/api/health', (_, res) => res.json({ ok: true, apiConfigured: Boolean(API_KEY) }));
+// Validation helpers
+function validateCoordinates(lat, lng, name = 'Location') {
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return `${name} must have valid lat/lng`;
+  if (lat < 25 || lat > 49) return `${name} latitude out of US range (25-49)`;
+  if (lng < -125 || lng > -66) return `${name} longitude out of US range (-125 to -66)`;
+  return null;
+}
+
+function validateDateTime(atTime) {
+  if (!atTime) return null; // Optional, defaults to now
+  try {
+    const d = new Date(atTime);
+    if (Number.isNaN(d.getTime())) return 'Invalid date format';
+    const now = new Date();
+    const maxFuture = new Date(now.getTime() + 12 * 60 * 60 * 1000); // +12 hours
+    if (d < new Date('2019-01-01')) return 'Date must be after 2019-01-01';
+    if (d > maxFuture) return 'Date must be within 12 hours in the future';
+    return null;
+  } catch (e) { return 'Invalid date format'; }
+}
+
 app.post('/api/compare-routes', async (req, res) => {
   try {
     const { origin, destination, atTime } = req.body || {};
-    if (![origin, destination].every(p => Number.isFinite(Number(p?.lat)) && Number.isFinite(Number(p?.lng)))) return res.status(400).json({ error: 'Origin and destination must include valid lat/lng' });
-    if (!API_KEY) return res.status(500).json({ error: 'FortyGuard API key is not configured' });
+    
+    // Validate origin
+    const originError = validateCoordinates(origin?.lat, origin?.lng, 'Origin');
+    if (originError) return res.status(400).json({ error: originError });
+    
+    // Validate destination
+    const destError = validateCoordinates(destination?.lat, destination?.lng, 'Destination');
+    if (destError) return res.status(400).json({ error: destError });
+    
+    // Validate date/time
+    const dateError = validateDateTime(atTime);
+    if (dateError) return res.status(400).json({ error: dateError });
     const { startDate, startTime } = dateTime(atTime); const routes = await getAlternativeRoutes(origin, destination);
     const enriched = await Promise.all(routes.map(async (route, routeId) => {
       const corridor = routeToCorridor(route.geometry); const common = { startDate, startTime, filterType: 1, granularity: 60 };
