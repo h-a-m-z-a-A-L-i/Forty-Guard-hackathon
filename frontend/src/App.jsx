@@ -33,6 +33,11 @@ const SWAP = <>
   <path d="M8 3 4 7l4 4" /><path d="M4 7h16" />
   <path d="m16 21 4-4-4-4" /><path d="M20 17H4" />
 </>;
+const SUN = <>
+  <circle cx="12" cy="12" r="4" />
+  <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
+</>;
+const MOON = <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z" />;
 
 // Rotating status messages shown while the backend polls FortyGuard.
 // A cold request takes ~30-60s; cached requests finish in ~2s.
@@ -62,7 +67,14 @@ export default function App() {
   const [cachedAt, setCachedAt] = useState(null); // timestamp of a restored cache result
   const [hoveredRouteId, setHoveredRouteId] = useState(null); // route highlighted from cards
   const [focusedRouteId, setFocusedRouteId] = useState(null); // isolate a single route (map + info)
+  const [theme, setTheme] = useState(() => localStorage.getItem('sr-theme') || 'dark');
   const abortRef = useRef(null);
+
+  // Apply + persist the theme on <html data-theme=...>.
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('sr-theme', theme);
+  }, [theme]);
 
   const cacheKey = `${from.trim().toLowerCase()}|${to.trim().toLowerCase()}`;
   const focusRoute = id => setFocusedRouteId(prev => (prev === id ? null : id));
@@ -129,7 +141,14 @@ export default function App() {
         <div className="brand">
           <span className="brand-mark"><Icon d={LEAF} size={18} /></span> ShadeRoute
         </div>
-        <div className="status-pill"><span className="status-dot" />Live · Montana</div>
+        <div className="nav-right">
+          <div className="status-pill"><span className="status-dot" />Live · Montana</div>
+          <button type="button" className="theme-toggle" onClick={() => setTheme(t => (t === 'dark' ? 'light' : 'dark'))}
+            aria-label="Toggle color theme">
+            <Icon d={theme === 'dark' ? SUN : MOON} size={15} />
+            {theme === 'dark' ? 'Light' : 'Dark'}
+          </button>
+        </div>
       </nav>
 
       <section className="hero">
@@ -262,7 +281,7 @@ export default function App() {
             </div>
           )}
 
-          <MapView {...result} hoveredRouteId={hoveredRouteId} focusedRouteId={focusedRouteId} onFocusRoute={focusRoute} />
+          <MapView {...result} hoveredRouteId={hoveredRouteId} focusedRouteId={focusedRouteId} onFocusRoute={focusRoute} theme={theme} />
 
           <div className="section">
             <span className="section-eyebrow">Compare</span>

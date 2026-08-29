@@ -3,10 +3,13 @@ import { MapContainer, TileLayer, Polyline, CircleMarker, Tooltip, Popup, ZoomCo
 import 'leaflet/dist/leaflet.css';
 
 // Temperature→color ramp tuned for the dark basemap (cool cyan → hot red).
-export const routeColor = temp => {
-  if (temp == null || !Number.isFinite(Number(temp))) return '#8b98a8';
+// In light mode the ramp is darkened ~20% to keep contrast on pale tiles.
+export const routeColor = (temp, light = false) => {
+  if (temp == null || !Number.isFinite(Number(temp))) return light ? '#6b7a8a' : '#8b98a8';
   const ratio = Math.max(0, Math.min(1, (Number(temp) - 20) / 25));
-  return `rgb(${Math.round(45 + 210 * ratio)},${Math.round(212 - 135 * ratio)},${Math.round(191 - 114 * ratio)})`;
+  let r = 45 + 210 * ratio, g = 212 - 135 * ratio, b = 191 - 114 * ratio;
+  if (light) { r *= 0.78; g *= 0.78; b *= 0.78; }
+  return `rgb(${Math.round(r)},${Math.round(g)},${Math.round(b)})`;
 };
 
 const fmt = n => n == null || !Number.isFinite(Number(n)) ? '—' : Number(n).toFixed(1);
@@ -44,7 +47,7 @@ function PathStyler({ routes, coolestRouteId, hoveredRouteId, focusedRouteId }) 
   return null;
 }
 
-export default function MapView({ routes = [], coolestRouteId, origin, destination, hoveredRouteId, focusedRouteId, onFocusRoute }) {
+export default function MapView({ routes = [], coolestRouteId, origin, destination, hoveredRouteId, focusedRouteId, onFocusRoute, theme = 'dark' }) {
 
   const { latlngs, bounds } = useMemo(() => {
     const ll = (routes || []).map(route => ({
@@ -61,6 +64,10 @@ export default function MapView({ routes = [], coolestRouteId, origin, destinati
 
   if (!latlngs.length) return null;
   const visible = latlngs.filter(({ route }) => (focusedRouteId == null ? true : route.routeId === focusedRouteId));
+  const light = theme === 'light';
+  const tiles = light
+    ? { url: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', stroke: '#1c2733' }
+    : { url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', stroke: '#e8edf2' };
 
   return (
     <div className="map">
@@ -78,7 +85,7 @@ export default function MapView({ routes = [], coolestRouteId, origin, destinati
       >
         <TileLayer
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>'
-          url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+          url={tiles.url}
           subdomains="abcd"
         />
         <ZoomControl position="topright" />
@@ -88,7 +95,7 @@ export default function MapView({ routes = [], coolestRouteId, origin, destinati
           const focused = focusedRouteId != null;
           const cool = focused ? route.routeId === focusedRouteId : route.routeId === coolestRouteId;
           const hovered = !focused && hoveredRouteId === route.routeId;
-          const color = routeColor(route.avgTemp);
+          const color = routeColor(route.avgTemp, light);
           const title = route.routeId === coolestRouteId ? 'Coolest route' : `Route ${route.routeId + 1}`;
           return (
             <Polyline
@@ -120,13 +127,13 @@ export default function MapView({ routes = [], coolestRouteId, origin, destinati
 
         {/* Start / end markers */}
         {origin && (
-          <CircleMarker center={[origin.lat, origin.lng]} radius={9} pathOptions={{ color: '#e8edf2', weight: 3, fillColor: '#38d9a9', fillOpacity: 1 }}>
+          <CircleMarker center={[origin.lat, origin.lng]} radius={9} pathOptions={{ color: tiles.stroke, weight: 3, fillColor: '#38d9a9', fillOpacity: 1 }}>
             <Tooltip direction="top" offset={[0, -12]} permanent>Start</Tooltip>
             <Popup><strong>Start</strong><div>{origin.label}</div></Popup>
           </CircleMarker>
         )}
         {destination && (
-          <CircleMarker center={[destination.lat, destination.lng]} radius={9} pathOptions={{ color: '#e8edf2', weight: 3, fillColor: '#ff6b35', fillOpacity: 1 }}>
+          <CircleMarker center={[destination.lat, destination.lng]} radius={9} pathOptions={{ color: tiles.stroke, weight: 3, fillColor: '#ff6b35', fillOpacity: 1 }}>
             <Tooltip direction="top" offset={[0, -12]} permanent>End</Tooltip>
             <Popup><strong>End</strong><div>{destination.label}</div></Popup>
           </CircleMarker>
@@ -152,7 +159,7 @@ export default function MapView({ routes = [], coolestRouteId, origin, destinati
               onClick={() => onFocusRoute?.(route.routeId)}
               title={active ? 'Show all routes' : `Show only Route ${route.routeId + 1}`}
             >
-              <span className="dot" style={{ background: routeColor(route.avgTemp) }} />
+              <span className="dot" style={{ background: routeColor(route.avgTemp, light) }} />
               {cool ? 'Coolest' : `Route ${route.routeId + 1}`}
               <span className="chip-temp">{fmt(route.avgTemp)}°C</span>
             </button>
