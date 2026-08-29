@@ -1,8 +1,11 @@
+/**
+ * Corridor building — mirrors backend/lib/corridor.js so we verify the SAME
+ * geometry the app feeds to FortyGuard.
+ */
 const turf = require('@turf/turf');
 const MAX_AREA_MI2 = 9.5;
-// Measured: a 171-ring corridor submit takes ~2.9s, a 13-ring (simplified)
-// corridor submit takes ~1.5s — queue time is unaffected, so simplify.
-const SIMPLIFY_TOLERANCE = 0.0005; // ~55m in degrees, high-quality Douglas-Peucker
+const SIMPLIFY_TOLERANCE = 0.0005;
+
 function routeToCorridor(geometry, bufferMeters = 60) {
   const buffered = turf.buffer(turf.feature(geometry), bufferMeters / 1000, { units: 'kilometers' });
   if (!buffered?.geometry?.coordinates?.length) throw new Error('Could not create route corridor');
@@ -12,5 +15,9 @@ function routeToCorridor(geometry, bufferMeters = 60) {
   const coords = simplified?.geometry?.coordinates || buffered.geometry.coordinates;
   return coords;
 }
-function routeMidpoint(geometry) { const mid = turf.along(turf.feature(geometry), turf.length(turf.feature(geometry), { units: 'kilometers' }) / 2, { units: 'kilometers' }); return { lat: mid.geometry.coordinates[1], lng: mid.geometry.coordinates[0] }; }
-module.exports = { routeToCorridor, routeMidpoint };
+
+function ringCount(polygonCoords) {
+  return polygonCoords?.[0]?.length || 0;
+}
+
+module.exports = { routeToCorridor, ringCount };

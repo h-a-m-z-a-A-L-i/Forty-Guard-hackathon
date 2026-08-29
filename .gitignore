@@ -2,3 +2,4 @@
 node_modules/
 dist/
 copilot_proxy.py
+new_proxy.py

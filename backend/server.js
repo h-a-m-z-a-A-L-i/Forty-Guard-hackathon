@@ -6,7 +6,7 @@ if (!process.env.FORTYGUARD_API_KEY && !process.env.api) {
   if (match) process.env.api = match[1];
 }
 const express = require('express'); const cors = require('cors'); const path = require('path');
-const { submitHeatmap, submitEnvParams, pollResult } = require('./lib/fortyguard');
+const { submitHeatmap, submitEnvParams, pollResult, heatmapCached, envParamsCached } = require('./lib/fortyguard');
 const { routeToCorridor, routeMidpoint } = require('./lib/corridor'); const { getAlternativeRoutes } = require('./lib/osrm');
 const app = express(); app.use(cors()); app.use(express.json());
 const API_KEY = process.env.FORTYGUARD_API_KEY || process.env.api;
@@ -47,7 +47,7 @@ function metric(result, key) {
   if (!values.length) return null;
   return key === 'Minimum' ? Math.min(...values) : key === 'Maximum' ? Math.max(...values) : values.reduce((sum, value) => sum + value, 0) / values.length;
 }
-app.get('/api/health', (_, res) => res.json({ ok: true, apiConfigured: Boolean(API_KEY) }));
+app.get('/api/health', (_, res) => res.json({ ok: true, apiConfigured: Boolean(API_KEY), cacheEntries: require('./lib/fortyguard')._cache.size }));
 // Validation helpers
 function validateCoordinates(lat, lng, name = 'Location') {
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return `${name} must have valid lat/lng`;
@@ -87,11 +87,15 @@ app.post('/api/compare-routes', async (req, res) => {
     const { startDate, startTime } = dateTime(atTime); const routes = await getAlternativeRoutes(origin, destination);
     const enriched = await Promise.all(routes.map(async (route, routeId) => {
       const corridor = routeToCorridor(route.geometry); const common = { startDate, startTime, filterType: 1, granularity: 60 };
-      const tcm = await pollResult(await submitHeatmap(corridor, { ...common, analyticType: 'tcm' }));
-      let hoursAboveThreshold = null; try { const ex = await pollResult(await submitHeatmap(corridor, { startDate, filterType: 3, granularity: 60, analyticType: 'exceedance', threshold: 35, direction: 'above' })); hoursAboveThreshold = metric(ex, 'Mean'); } catch (e) { console.warn('Exceedance failed:', e.message); }
+      // Submit tcm + exceedance concurrently per route (was serial: tcm queue
+      // then exceedance queue — that roughly doubled per-route wall time).
+      const [tcm, hoursAboveThreshold] = await Promise.all([
+        heatmapCached(corridor, { ...common, analyticType: 'tcm' }),
+        (async () => { try { const ex = await heatmapCached(corridor, { startDate, filterType: 3, granularity: 60, analyticType: 'exceedance', threshold: 35, direction: 'above' }); return metric(ex, 'Mean'); } catch (e) { console.warn('Exceedance failed:', e.message); return null; } })()
+      ]);
       return { routeId, geometry: route.geometry, durationSeconds: route.duration, distanceMeters: route.distance, avgTemp: metric(tcm, 'Mean'), maxTemp: metric(tcm, 'Maximum'), hoursAboveThreshold };    }));
     const coolest = enriched.reduce((a,b) => (a.avgTemp == null ? b : b.avgTemp == null ? a : a.avgTemp < b.avgTemp ? a : b)); let feelsLike = null;
-    try { const mid = routeMidpoint(routes[coolest.routeId].geometry); const env = await pollResult(await submitEnvParams(mid.lat, mid.lng, coolest.avgTemp, { startDate, startTime, analysis: ['heat_index_celsius','apparent_temperature_celsius','relative_humidity_percent'] })); feelsLike = env?.locations?.[0]?.parameters || null; } catch (e) { console.warn('Feels-like failed:', e.message); }
+    try { const mid = routeMidpoint(routes[coolest.routeId].geometry); const env = await envParamsCached(mid.lat, mid.lng, coolest.avgTemp, { startDate, startTime, analysis: ['heat_index_celsius','apparent_temperature_celsius','relative_humidity_percent'] }); feelsLike = env?.locations?.[0]?.parameters || null; } catch (e) { console.warn('Feels-like failed:', e.message); }
     res.json({ routes: enriched, coolestRouteId: coolest.routeId, feelsLike, analyzedAt: { startDate, startTime } });
   } catch (e) { console.error(e); res.status(500).json({ error: e.response?.data?.message || e.message || 'Route comparison failed' }); }
 });

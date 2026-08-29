@@ -1,0 +1,14 @@
+{
+  "name": "shaderoute-data-verification",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Standalone test pipeline that verifies the credibility of ShadeRoute data: route optimality, real-time temperatures, and ground-truth cross-checks. Deliberately SEPARATE from the app backend (no cache, raw API calls only).",
+  "scripts": {
+    "run": "node scripts/run.js",
+    "report": "node scripts/report.js"
+  },
+  "dependencies": {
+    "@turf/turf": "^7.2.0",
+    "axios": "^1.8.4"
+  }
+}

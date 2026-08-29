@@ -1,8 +1,9 @@
+/**
+ * Route fetching — same endpoints the app uses (mirrors backend/lib/osrm.js),
+ * but independent code so the pipeline is a true black-box test.
+ */
 const axios = require('axios');
 
-// routing.openstreetmap.de is faster than the public project-osrm foot profile
-// AND returns more alternatives for short routes (measured: ~0.8s, 2 routes
-// vs ~2.6s, 1 route). project-osrm stays as a fallback.
 const ENDPOINTS = {
   foot: [
     'https://routing.openstreetmap.de/routed-foot/route/v1/foot',
@@ -29,7 +30,7 @@ async function getAlternativeRoutes(origin, destination, profile = 'foot') {
       return res.data.routes.slice(0, 3).map(({ geometry, duration, distance }) => ({ geometry, duration, distance }));
     } catch (e) {
       lastError = e.response?.status === 400 ? new Error('No routes found for these locations') : e;
-      if (e.response?.status === 400) throw lastError; // don't retry bad input
+      if (e.response?.status === 400) throw lastError;
     }
   }
   throw lastError;
