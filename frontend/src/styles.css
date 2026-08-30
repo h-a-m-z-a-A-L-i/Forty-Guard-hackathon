@@ -179,7 +179,7 @@ body{
 /* route path styling */
 .route-cool{animation:dashflow 1.2s linear infinite;filter:drop-shadow(0 0 6px rgba(56,217,169,.9));stroke-dasharray:14 10}
 .route-other{stroke-dasharray:2 9}
-.route-hover{stroke-dasharray:none!important;animation:none;filter:drop-shadow(0 0 6px rgba(125,211,252,.8))}
+.route-hover{filter:drop-shadow(0 0 6px rgba(125,211,252,.9));opacity:1!important}
 @keyframes dashflow{to{stroke-dashoffset:-48}}
 
 /* ---------- cards ---------- */

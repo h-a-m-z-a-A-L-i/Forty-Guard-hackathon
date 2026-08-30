@@ -17,20 +17,24 @@ const mins = s => Number.isFinite(Number(s)) ? `${Math.round(s / 60)} min` : 'â€
 const miles = m => fmt(Number(m) / 1609.34);
 
 // react-leaflet v4 ignores `className` in pathOptions, so we stamp styling
-// classes directly onto the rendered SVG paths. Rendered inside the map, it
-// sees every layeradd/layerremove and re-stamps after each change.
+// classes directly onto the rendered SVG paths. We match each leaflet layer to
+// its route by geometry (not DOM order, which puts markers before routes), so
+// the classes always land on the right paths in every focus/hover state.
 function PathStyler({ routes, coolestRouteId, hoveredRouteId, focusedRouteId }) {
   const map = useMap();
   useEffect(() => {
     let raf;
+    const keyOf = ll => JSON.stringify((ll || []).map(p => [Number(p.lat.toFixed(6)), Number(p.lng.toFixed(6))]));
+    const routeByKey = new Map(
+      (routes || []).map(r => [keyOf((r.geometry?.coordinates || []).map(([lng, lat]) => ({ lat, lng }))), r])
+    );
     const stamp = () => {
-      const svg = map.getPane('overlayPane')?.querySelector('svg');
-      if (!svg) return;
-      const paths = Array.from(svg.querySelectorAll('path'));
-      const visibleRoutes = (routes || []).filter(r => focusedRouteId == null || r.routeId === focusedRouteId);
-      paths.slice(0, visibleRoutes.length).forEach((el, i) => {
-        const route = visibleRoutes[i];
-        if (!route) return;
+      map.eachLayer(layer => {
+        // Skip non-route layers: TileLayer (no getLatLngs) and CircleMarkers (getRadius).
+        if (typeof layer.getLatLngs !== 'function' || typeof layer.getRadius === 'function') return;
+        const route = routeByKey.get(keyOf(layer.getLatLngs()));
+        const el = layer.getElement();
+        if (!route || !el) return;
         const highlighted = focusedRouteId != null ? route.routeId === focusedRouteId : route.routeId === coolestRouteId;
         el.classList.remove('route-cool', 'route-other', 'route-hover');
         if (highlighted) el.classList.add('route-cool');
@@ -106,6 +110,7 @@ export default function MapView({ routes = [], coolestRouteId, origin, destinati
                 opacity: cool ? 0.95 : hovered ? 0.95 : 0.55,
                 lineCap: 'round',
                 lineJoin: 'round',
+                dashArray: '2 9', // every route is born dotted â€” never solid
               }}
             >
               <Tooltip sticky>
