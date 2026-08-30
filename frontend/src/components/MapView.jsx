@@ -66,8 +66,8 @@ export default function MapView({ routes = [], coolestRouteId, origin, destinati
   const visible = latlngs.filter(({ route }) => (focusedRouteId == null ? true : route.routeId === focusedRouteId));
   const light = theme === 'light';
   const tiles = light
-    ? { url: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', stroke: '#1c2733' }
-    : { url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', stroke: '#e8edf2' };
+    ? { url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}', stroke: '#1c2733' }
+    : { url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', stroke: '#e8edf2' };
 
   return (
     <div className="map">
@@ -84,9 +84,8 @@ export default function MapView({ routes = [], coolestRouteId, origin, destinati
         style={{ height: '100%', width: '100%' }}
       >
         <TileLayer
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>'
+          attribution='Tiles &copy; Esri &mdash; Source: Esri, DeLorme, NAVTEQ'
           url={tiles.url}
-          subdomains="abcd"
         />
         <ZoomControl position="topright" />
 
