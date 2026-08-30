@@ -119,6 +119,9 @@ export default function App() {
     const controller = new AbortController();
     abortRef.current = controller;
     setLoading(true); setError(''); setCachedAt(null);
+    // Drop the previous result immediately — the old map/cards must not linger
+    // while the new route's heat model is being computed.
+    setResult(null); setDeparture(null); setDepartureLoading(false);
     localStorage.setItem('sr-from', from);
     localStorage.setItem('sr-to', to);
     try {

@@ -109,13 +109,10 @@ app.post('/api/compare-routes', async (req, res) => {
       const pctAbove35 = cells.length
         ? Math.round((cells.filter(c => Number(c?.properties?.average_temperature) > 35).length / cells.length) * 100)
         : null;
-      const heatGrid = cells.length
-        ? { type: 'FeatureCollection', features: cells.map(c => ({ type: 'Feature', properties: { t: Number(c?.properties?.average_temperature) }, geometry: c.geometry })) }
-        : null;
       // Standard deviation = how unevenly heat is spread along the corridor
       // ("steady heat" vs "cool pockets") — zero extra cost, part of stats_data.
       const spread = Number(tcm?.stats_data?.temperature_stats?.standard_deviation ?? tcm?.stats_data?.Temperature_stats?.Standard_deviation) || null;
-      return { routeId, geometry: route.geometry, durationSeconds: route.duration, distanceMeters: route.distance, avgTemp: metric(tcm, 'Mean'), maxTemp: metric(tcm, 'Maximum'), spread, hoursAboveThreshold, pctAbove35, heatGrid };    }));
+      return { routeId, geometry: route.geometry, durationSeconds: route.duration, distanceMeters: route.distance, avgTemp: metric(tcm, 'Mean'), maxTemp: metric(tcm, 'Maximum'), spread, hoursAboveThreshold, pctAbove35 };    }));
     const coolest = enriched.reduce((a,b) => (a.avgTemp == null ? b : b.avgTemp == null ? a : a.avgTemp < b.avgTemp ? a : b)); let feelsLike = null;
     try { const mid = routeMidpoint(routes[coolest.routeId].geometry); const env = await envParamsCached(mid.lat, mid.lng, coolest.avgTemp, { startDate, startTime, analysis: ['heat_index_celsius','wet_bulb_temperature_celsius','relative_humidity_percent'] }); feelsLike = env?.locations?.[0]?.parameters || null; } catch (e) { console.warn('Feels-like failed:', e.message); }
     res.json({ routes: enriched, coolestRouteId: coolest.routeId, feelsLike, analyzedAt: { startDate, startTime } });

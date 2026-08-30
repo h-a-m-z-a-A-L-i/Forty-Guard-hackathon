@@ -1,5 +1,5 @@
-import React, { useMemo, useEffect, useState } from 'react';
-import { MapContainer, TileLayer, Polyline, CircleMarker, Tooltip, Popup, ZoomControl, useMap, GeoJSON } from 'react-leaflet';
+import React, { useMemo, useEffect } from 'react';
+import { MapContainer, TileLayer, Polyline, CircleMarker, Tooltip, Popup, ZoomControl, useMap } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 
 // Temperature→color ramp tuned for the dark basemap (cool cyan → hot red).
@@ -60,8 +60,6 @@ function PathStyler({ routes, coolestRouteId, hoveredRouteId, focusedRouteId }) 
 
 export default function MapView({ routes = [], coolestRouteId, origin, destination, hoveredRouteId, focusedRouteId, onFocusRoute, theme = 'dark' }) {
 
-  const [showGrid, setShowGrid] = useState(true);
-
   const { latlngs, bounds } = useMemo(() => {
     const ll = (routes || []).map(route => ({
       route,
@@ -101,24 +99,6 @@ export default function MapView({ routes = [], coolestRouteId, origin, destinati
           url={tiles.url}
         />
         <ZoomControl position="topright" />
-
-        {/* Heat grid — per-60m-cell surface temps from the same heatmap response (zero extra API cost) */}
-        {showGrid && visible.map(({ route }) =>
-          route.heatGrid?.features?.length ? (
-            <GeoJSON
-              key={`grid-${route.routeId}`}
-              data={route.heatGrid}
-              interactive={false}
-              style={f => ({
-                color: routeColor(f.properties?.t, light),
-                weight: 0.6,
-                opacity: 0.8,
-                fillColor: routeColor(f.properties?.t, light),
-                fillOpacity: 0.4,
-              })}
-            />
-          ) : null
-        )}
 
         {/* Routes colored by average temperature */}
         {visible.map(({ route, points }) => {
@@ -197,13 +177,7 @@ export default function MapView({ routes = [], coolestRouteId, origin, destinati
             </button>
           );
         })}
-        <button type="button" className={`chip${showGrid ? ' active' : ' off'}`}
-          onClick={() => setShowGrid(v => !v)}
-          title={showGrid ? 'Hide heat grid' : 'Show heat grid'}
-        >
-          <span className="dot" style={{ background: 'linear-gradient(90deg,rgb(45,212,191),rgb(255,77,77))' }} />
-          Heat grid
-        </button>
+
       </div>
 
       {/* Temperature legend */}
