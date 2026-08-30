@@ -42,7 +42,9 @@ export default function RouteComparisonCards({ routes, coolestRouteId, feelsLike
               <div className="stat-chip"><small>Duration</small><b>{mins(r.durationSeconds)}</b></div>
               <div className="stat-chip"><small>Distance</small><b>{miles(r.distanceMeters)}</b></div>
               <div className="stat-chip"><small>Max temp</small><b>{value(r.maxTemp)}°C</b></div>
-              <div className="stat-chip"><small>Above 35°C</small><b>{r.hoursAboveThreshold == null ? '—' : `${value(r.hoursAboveThreshold)} hrs`}</b></div>
+              {(r.hoursAboveThreshold ?? 0) > 0 && (
+                <div className="stat-chip"><small>Above 35°C</small><b>{value(r.hoursAboveThreshold)} hrs</b></div>
+              )}
             </div>
 
             {delta && <div className={`delta ${delta.type}`}>{delta.text}</div>}

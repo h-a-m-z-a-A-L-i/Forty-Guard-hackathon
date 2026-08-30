@@ -134,6 +134,7 @@ export default function App() {
   const timePenalty = winner && fastest && winner.routeId !== fastest.routeId
     ? Math.round((winner.durationSeconds - fastest.durationSeconds) / 60) : 0;
   const focused = routes.find(r => r.routeId === focusedRouteId) || null;
+  const heatRisk = routes.some(r => (r.hoursAboveThreshold ?? 0) > 0);
 
   return (
     <div className="app">
@@ -243,10 +244,12 @@ export default function App() {
                   <div className="stat-label">Distance</div>
                   <div className="stat-value">{miles(winner.distanceMeters)}</div>
                 </div>
-                <div className="stat">
-                  <div className="stat-label">Above 35°C</div>
-                  <div className="stat-value warn">{winner.hoursAboveThreshold == null ? '—' : `${Number(winner.hoursAboveThreshold).toFixed(1)} hrs`}</div>
-                </div>
+                {heatRisk && (
+                  <div className="stat">
+                    <div className="stat-label">Above 35°C</div>
+                    <div className="stat-value warn">{Number(winner.hoursAboveThreshold).toFixed(1)} hrs</div>
+                  </div>
+                )}
               </div>
               {result.analyzedAt && (
                 <div className="verdict-meta">Analyzed {result.analyzedAt.startDate} {result.analyzedAt.startTime} UTC · live FortyGuard surface model · {routes.length} alternate routes</div>
@@ -274,7 +277,9 @@ export default function App() {
                 <div className="focus-stat"><small>Feels like</small><b>{feelsLike == null ? '—' : `${Number(feelsLike).toFixed(1)}°C`}</b></div>
                 <div className="focus-stat"><small>Duration</small><b>{mins(focused.durationSeconds)}</b></div>
                 <div className="focus-stat"><small>Distance</small><b>{miles(focused.distanceMeters)}</b></div>
-                <div className="focus-stat"><small>Above 35°C</small><b>{focused.hoursAboveThreshold == null ? '—' : `${Number(focused.hoursAboveThreshold).toFixed(1)} hrs`}</b></div>
+                {(focused.hoursAboveThreshold ?? 0) > 0 && (
+                  <div className="focus-stat"><small>Above 35°C</small><b>{Number(focused.hoursAboveThreshold).toFixed(1)} hrs</b></div>
+                )}
                 <div className="focus-stat"><small>vs coolest</small><b>{focused.routeId === winner.routeId ? 'Coolest' : `+${Math.max(0, focused.avgTemp - winner.avgTemp).toFixed(1)}°C`}</b></div>
               </div>
               <button className="focus-reset" onClick={() => setFocusedRouteId(null)}>× Show all routes</button>

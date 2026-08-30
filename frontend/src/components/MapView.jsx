@@ -122,7 +122,7 @@ export default function MapView({ routes = [], coolestRouteId, origin, destinati
                 <strong>{title}</strong>
                 <div>Avg temperature: {fmt(route.avgTemp)}°C</div>
                 <div>Max temperature: {fmt(route.maxTemp)}°C</div>
-                <div>{route.hoursAboveThreshold == null ? 'Unavailable' : `${fmt(route.hoursAboveThreshold)} hrs above 35°C`}</div>
+                {Number(route.hoursAboveThreshold) > 0 && <div>{fmt(route.hoursAboveThreshold)} hrs above 35°C</div>}
                 <div>{mins(route.durationSeconds)} · {miles(route.distanceMeters)} mi</div>
               </Popup>
             </Polyline>
