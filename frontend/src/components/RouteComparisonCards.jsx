@@ -32,7 +32,6 @@ export default function RouteComparisonCards({ routes, coolestRouteId, feelsLike
           >
             <div className="card-head">
               <h3>{cool ? 'Coolest route' : `Route ${r.routeId + 1}`}</h3>
-              {cool && <span className="badge cool">Recommended</span>}
               {fast && !cool && <span className="badge fast">Fastest</span>}
             </div>
 
