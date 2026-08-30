@@ -1,5 +1,5 @@
-import React, { useMemo, useEffect } from 'react';
-import { MapContainer, TileLayer, Polyline, CircleMarker, Tooltip, Popup, ZoomControl, useMap } from 'react-leaflet';
+import React, { useMemo, useEffect, useState } from 'react';
+import { MapContainer, TileLayer, Polyline, CircleMarker, Tooltip, Popup, ZoomControl, useMap, GeoJSON } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 
 // Temperature→color ramp tuned for the dark basemap (cool cyan → hot red).
@@ -24,7 +24,12 @@ function PathStyler({ routes, coolestRouteId, hoveredRouteId, focusedRouteId }) 
   const map = useMap();
   useEffect(() => {
     let raf;
-    const keyOf = ll => JSON.stringify((ll || []).map(p => [Number(p.lat.toFixed(6)), Number(p.lng.toFixed(6))]));
+    const isLatLng = p => p && typeof p === 'object' && Number.isFinite(Number(p.lat)) && Number.isFinite(Number(p.lng));
+    // Only Polyline layers return flat LatLng arrays. Heat-grid GeoJSON layers
+    // return nested rings — return null for those so we skip them safely.
+    const keyOf = ll => (Array.isArray(ll) && ll.every(isLatLng))
+      ? JSON.stringify(ll.map(p => [Number(p.lat.toFixed(6)), Number(p.lng.toFixed(6))]))
+      : null;
     const routeByKey = new Map(
       (routes || []).map(r => [keyOf((r.geometry?.coordinates || []).map(([lng, lat]) => ({ lat, lng }))), r])
     );
@@ -32,7 +37,9 @@ function PathStyler({ routes, coolestRouteId, hoveredRouteId, focusedRouteId }) 
       map.eachLayer(layer => {
         // Skip non-route layers: TileLayer (no getLatLngs) and CircleMarkers (getRadius).
         if (typeof layer.getLatLngs !== 'function' || typeof layer.getRadius === 'function') return;
-        const route = routeByKey.get(keyOf(layer.getLatLngs()));
+        const key = keyOf(layer.getLatLngs());
+        if (key == null) return; // nested latlngs (heat grid) or empty
+        const route = routeByKey.get(key);
         const el = layer.getElement();
         if (!route || !el) return;
         const highlighted = focusedRouteId != null ? route.routeId === focusedRouteId : route.routeId === coolestRouteId;
@@ -52,6 +59,8 @@ function PathStyler({ routes, coolestRouteId, hoveredRouteId, focusedRouteId }) 
 }
 
 export default function MapView({ routes = [], coolestRouteId, origin, destination, hoveredRouteId, focusedRouteId, onFocusRoute, theme = 'dark' }) {
+
+  const [showGrid, setShowGrid] = useState(true);
 
   const { latlngs, bounds } = useMemo(() => {
     const ll = (routes || []).map(route => ({
@@ -93,6 +102,24 @@ export default function MapView({ routes = [], coolestRouteId, origin, destinati
         />
         <ZoomControl position="topright" />
 
+        {/* Heat grid — per-60m-cell surface temps from the same heatmap response (zero extra API cost) */}
+        {showGrid && visible.map(({ route }) =>
+          route.heatGrid?.features?.length ? (
+            <GeoJSON
+              key={`grid-${route.routeId}`}
+              data={route.heatGrid}
+              interactive={false}
+              style={f => ({
+                color: routeColor(f.properties?.t, light),
+                weight: 0.6,
+                opacity: 0.8,
+                fillColor: routeColor(f.properties?.t, light),
+                fillOpacity: 0.4,
+              })}
+            />
+          ) : null
+        )}
+
         {/* Routes colored by average temperature */}
         {visible.map(({ route, points }) => {
           const focused = focusedRouteId != null;
@@ -115,14 +142,15 @@ export default function MapView({ routes = [], coolestRouteId, origin, destinati
             >
               <Tooltip sticky>
                 <strong>{title}</strong>
-                <br />Avg {fmt(route.avgTemp)}°C · Max {fmt(route.maxTemp)}°C
+                <br />Avg {fmt(route.avgTemp)}°C · Max {fmt(route.maxTemp)}°C{route.spread != null && route.spread >= 0.3 ? ` · ±${Number(route.spread).toFixed(1)}°C spread` : ''}
                 <br />{mins(route.durationSeconds)} · {miles(route.distanceMeters)} mi
               </Tooltip>
               <Popup>
                 <strong>{title}</strong>
                 <div>Avg temperature: {fmt(route.avgTemp)}°C</div>
                 <div>Max temperature: {fmt(route.maxTemp)}°C</div>
-                {Number(route.hoursAboveThreshold) > 0 && <div>{fmt(route.hoursAboveThreshold)} hrs above 35°C</div>}
+                {Number(route.hoursAboveThreshold) > 0 && <div>{fmt(route.hoursAboveThreshold)} hrs above 35°C{route.pctAbove35 > 0 ? ` · ${route.pctAbove35}% of route` : ''}</div>}
+                {route.spread != null && route.spread >= 0.3 && <div>Heat spread ±{Number(route.spread).toFixed(1)}°C</div>}
                 <div>{mins(route.durationSeconds)} · {miles(route.distanceMeters)} mi</div>
               </Popup>
             </Polyline>
@@ -169,6 +197,13 @@ export default function MapView({ routes = [], coolestRouteId, origin, destinati
             </button>
           );
         })}
+        <button type="button" className={`chip${showGrid ? ' active' : ' off'}`}
+          onClick={() => setShowGrid(v => !v)}
+          title={showGrid ? 'Hide heat grid' : 'Show heat grid'}
+        >
+          <span className="dot" style={{ background: 'linear-gradient(90deg,rgb(45,212,191),rgb(255,77,77))' }} />
+          Heat grid
+        </button>
       </div>
 
       {/* Temperature legend */}

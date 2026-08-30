@@ -28,6 +28,14 @@ function dateTime(value) {
   d.setUTCMinutes(0, 0, 0);
   return { startDate: `${d.getUTCFullYear()}-${pad(d.getUTCMonth()+1)}-${pad(d.getUTCDate())}`, startTime: `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}` };
 }
+// Shift a (startDate, startTime) pair by whole hours (used to probe the
+// +12h forecast window for the "coolest time to leave" planner).
+function shiftHours(dateStr, timeStr, hours) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const [hh, mm] = timeStr.split(':').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d, hh, mm) + hours * 3600 * 1000);
+  return { startDate: `${dt.getUTCFullYear()}-${pad(dt.getUTCMonth() + 1)}-${pad(dt.getUTCDate())}`, startTime: `${pad(dt.getUTCHours())}:${pad(dt.getUTCMinutes())}` };
+}
 function metric(result, key) {
   // Three real FortyGuard response shapes:
   //   1. plan docs:      stats_data.Temperature_stats.Mean
@@ -93,11 +101,81 @@ app.post('/api/compare-routes', async (req, res) => {
         heatmapCached(corridor, { ...common, analyticType: 'tcm' }),
         (async () => { try { const ex = await heatmapCached(corridor, { startDate, filterType: 3, granularity: 60, analyticType: 'exceedance', threshold: 35, direction: 'above' }); return metric(ex, 'Mean'); } catch (e) { console.warn('Exceedance failed:', e.message); return null; } })()
       ]);
-      return { routeId, geometry: route.geometry, durationSeconds: route.duration, distanceMeters: route.distance, avgTemp: metric(tcm, 'Mean'), maxTemp: metric(tcm, 'Maximum'), hoursAboveThreshold };    }));
+      // map_data = per-60m-cell temperature grid returned with every tcm
+      // result. We derive the "% of corridor above 35°C right now" stat and
+      // forward a lightweight copy of the grid to the frontend for the
+      // heat-map overlay — both at zero extra API cost.
+      const cells = tcm?.map_data?.features || [];
+      const pctAbove35 = cells.length
+        ? Math.round((cells.filter(c => Number(c?.properties?.average_temperature) > 35).length / cells.length) * 100)
+        : null;
+      const heatGrid = cells.length
+        ? { type: 'FeatureCollection', features: cells.map(c => ({ type: 'Feature', properties: { t: Number(c?.properties?.average_temperature) }, geometry: c.geometry })) }
+        : null;
+      // Standard deviation = how unevenly heat is spread along the corridor
+      // ("steady heat" vs "cool pockets") — zero extra cost, part of stats_data.
+      const spread = Number(tcm?.stats_data?.temperature_stats?.standard_deviation ?? tcm?.stats_data?.Temperature_stats?.Standard_deviation) || null;
+      return { routeId, geometry: route.geometry, durationSeconds: route.duration, distanceMeters: route.distance, avgTemp: metric(tcm, 'Mean'), maxTemp: metric(tcm, 'Maximum'), spread, hoursAboveThreshold, pctAbove35, heatGrid };    }));
     const coolest = enriched.reduce((a,b) => (a.avgTemp == null ? b : b.avgTemp == null ? a : a.avgTemp < b.avgTemp ? a : b)); let feelsLike = null;
-    try { const mid = routeMidpoint(routes[coolest.routeId].geometry); const env = await envParamsCached(mid.lat, mid.lng, coolest.avgTemp, { startDate, startTime, analysis: ['heat_index_celsius','apparent_temperature_celsius','relative_humidity_percent'] }); feelsLike = env?.locations?.[0]?.parameters || null; } catch (e) { console.warn('Feels-like failed:', e.message); }
+    try { const mid = routeMidpoint(routes[coolest.routeId].geometry); const env = await envParamsCached(mid.lat, mid.lng, coolest.avgTemp, { startDate, startTime, analysis: ['heat_index_celsius','wet_bulb_temperature_celsius','relative_humidity_percent'] }); feelsLike = env?.locations?.[0]?.parameters || null; } catch (e) { console.warn('Feels-like failed:', e.message); }
     res.json({ routes: enriched, coolestRouteId: coolest.routeId, feelsLike, analyzedAt: { startDate, startTime } });
   } catch (e) { console.error(e); res.status(500).json({ error: e.response?.data?.message || e.message || 'Route comparison failed' }); }
+});
+
+// Best-departure planner: probes the +12h forecast window for the coolest
+// route's corridor and recommends the coolest hour to leave. Runs tcm at
+// +2/+4/+6h (each cached per corridor+hour) plus today's continuous >35°C
+// exposure (persistence, filter_type 3) — all submitted in parallel.
+app.post('/api/departure-window', async (req, res) => {
+  try {
+    const { origin, destination, atTime } = req.body || {};
+    const oErr = validateCoordinates(origin?.lat, origin?.lng, 'Origin'); if (oErr) return res.status(400).json({ error: oErr });
+    const dErr = validateCoordinates(destination?.lat, destination?.lng, 'Destination'); if (dErr) return res.status(400).json({ error: dErr });
+    const tErr = validateDateTime(atTime); if (tErr) return res.status(400).json({ error: tErr });
+    const base = dateTime(atTime);
+    const routes = await getAlternativeRoutes(origin, destination);
+    const corridors = routes.map(r => routeToCorridor(r.geometry));
+    // Base-hour temps are cached from /api/compare-routes, so this is instant;
+    // use them to pick which corridor to forecast.
+    const baseTemps = await Promise.all(corridors.map(c =>
+      heatmapCached(c, { startDate: base.startDate, startTime: base.startTime, filterType: 1, granularity: 60, analyticType: 'tcm' })
+        .then(t => metric(t, 'Mean')).catch(() => null)));
+    let coolIdx = 0; baseTemps.forEach((t, i) => { if (t != null && (baseTemps[coolIdx] == null || t < baseTemps[coolIdx])) coolIdx = i; });
+    const corridor = corridors[coolIdx];
+    const probes = [2, 4, 6].map(h => ({ offset: h, ...shiftHours(base.startDate, base.startTime, h) }));
+    const [future, persistenceHours] = await Promise.all([
+      Promise.all(probes.map(p => heatmapCached(corridor, { startDate: p.startDate, startTime: p.startTime, filterType: 1, granularity: 60, analyticType: 'tcm' }).then(t => metric(t, 'Mean')).catch(() => null))),
+      heatmapCached(corridor, { startDate: base.startDate, filterType: 3, granularity: 60, analyticType: 'persistence', threshold: 35, direction: 'above' })
+        .then(t => metric(t, 'Mean')).catch(() => null)
+    ]);
+    const hours = [0, 2, 4, 6].map((offset, i) => ({
+      offset,
+      label: shiftHours(base.startDate, base.startTime, offset).startTime + ' UTC',
+      temp: i === 0 ? baseTemps[coolIdx] : future[i - 1],
+    }));
+    const valid = hours.filter(h => h.temp != null);
+    let best = valid[0] || null; valid.forEach(h => { if (h.temp < best.temp) best = h; });
+    const now = valid.find(h => h.offset === 0);
+    const saving = best && now && best.offset !== 0 && now.temp != null ? Math.round((now.temp - best.temp) * 10) / 10 : 0;
+    res.json({ coolestRouteId: coolIdx, hours, best, saving, persistenceHours });
+  } catch (e) { console.error(e); res.status(500).json({ error: e.response?.data?.message || e.message || 'Departure window failed' }); }
+});
+
+// Plan probe — Satellite Segmentation is Premium-only: a 200 means the key
+// has Premium access, 403 means Basic (every feature we ship works on Basic).
+app.get('/api/plan', async (_, res) => {
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    const r = await fetch('https://api.fortyguard.com/v1/satellite', {
+      method: 'POST',
+      headers: { 'api-key': API_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sat: { latitude: 46.5857, longitude: -112.0184 }, date_time: { start_date: today, start_time: '14:00', filter_type: 1 }, granularity: 80 }),
+      signal: AbortSignal.timeout(20000),
+    });
+    res.json({ premium: r.status === 200, probe: r.status, body: await r.json().catch(() => null) });
+  } catch (e) {
+    res.json({ premium: false, probe: e.cause?.code || e.name || 'network-error', body: e.message });
+  }
 });
 app.get('*', (req, res, next) => {
   if (req.path.startsWith('/api/')) return next();

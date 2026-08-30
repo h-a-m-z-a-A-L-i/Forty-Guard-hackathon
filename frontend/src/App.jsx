@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import MapView from './components/MapView';
 import RouteComparisonCards from './components/RouteComparisonCards';
-import { compareRoutes, geocode } from './api/client';
+import { compareRoutes, geocode, departureWindow } from './api/client';
 
 const temp = value => value == null || !Number.isFinite(Number(value)) ? 'Unavailable' : `${Number(value).toFixed(1)}°C`;
 const mins = s => Number.isFinite(Number(s)) ? `${Math.round(s / 60)} min` : '—';
@@ -68,6 +68,8 @@ export default function App() {
   const [hoveredRouteId, setHoveredRouteId] = useState(null); // route highlighted from cards
   const [focusedRouteId, setFocusedRouteId] = useState(null); // isolate a single route (map + info)
   const [theme, setTheme] = useState(() => localStorage.getItem('sr-theme') || 'dark');
+  const [departure, setDeparture] = useState(null); // { hours, best, saving, persistenceHours } from /api/departure-window
+  const [departureLoading, setDepartureLoading] = useState(false);
   const abortRef = useRef(null);
 
   // Apply + persist the theme on <html data-theme=...>.
@@ -79,6 +81,13 @@ export default function App() {
   const cacheKey = `${from.trim().toLowerCase()}|${to.trim().toLowerCase()}`;
   const focusRoute = id => setFocusedRouteId(prev => (prev === id ? null : id));
 
+  // Non-blocking: after the route comparison renders, probe the +12h forecast
+  // window and recommend the coolest hour to leave (cached per corridor+hour).
+  const loadDeparture = (o, d, signal) => {
+    setDeparture(null); setDepartureLoading(true);
+    departureWindow(o, d, null, signal).then(setDeparture).catch(() => {}).finally(() => setDepartureLoading(false));
+  };
+
   // Restore last result from localStorage if it matches the current query.
   useEffect(() => {
     try {
@@ -86,6 +95,7 @@ export default function App() {
       if (saved && saved.key === cacheKey) {
         setResult(saved.value);
         setCachedAt(saved.at);
+        loadDeparture(saved.value?.origin, saved.value?.destination);
       }
     } catch (e) { /* ignore corrupt cache */ }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -119,6 +129,7 @@ export default function App() {
       setResult(value);
       setFocusedRouteId(null);
       localStorage.setItem('sr-result', JSON.stringify({ key: cacheKey, value, at: Date.now() }));
+      loadDeparture(o, d, controller.signal);
     } catch (x) {
       if (x?.code !== 'ERR_CANCELED') setError(x.response?.data?.error || x.message);
     } finally {
@@ -131,6 +142,7 @@ export default function App() {
   const winner = routes.find(r => r.routeId === result.coolestRouteId) || routes[0];
   const fastest = routes.reduce((a, b) => !a || b.durationSeconds < a.durationSeconds ? b : a, null);
   const feelsLike = result?.feelsLike?.heat_index_celsius?.[0];
+  const wetBulb = result?.feelsLike?.wet_bulb_temperature_celsius?.[0];
   const timePenalty = winner && fastest && winner.routeId !== fastest.routeId
     ? Math.round((winner.durationSeconds - fastest.durationSeconds) / 60) : 0;
   const focused = routes.find(r => r.routeId === focusedRouteId) || null;
@@ -229,6 +241,10 @@ export default function App() {
                   <div className="stat-value good">{feelsLike == null ? '—' : `${Number(feelsLike).toFixed(1)}°C`}</div>
                 </div>
                 <div className="stat">
+                  <div className="stat-label">Wet bulb</div>
+                  <div className="stat-value">{wetBulb == null ? '—' : `${Number(wetBulb).toFixed(1)}°C`}</div>
+                </div>
+                <div className="stat">
                   <div className="stat-label">vs fastest route</div>
                   <div className="stat-value good">
                     {fastest && winner.routeId !== fastest.routeId
@@ -250,9 +266,23 @@ export default function App() {
                     <div className="stat-value warn">{Number(winner.hoursAboveThreshold).toFixed(1)} hrs</div>
                   </div>
                 )}
+                {(winner.pctAbove35 ?? 0) > 0 && (
+                  <div className="stat">
+                    <div className="stat-label">Hot now</div>
+                    <div className="stat-value warn">{winner.pctAbove35}% of route</div>
+                  </div>
+                )}
               </div>
               {result.analyzedAt && (
                 <div className="verdict-meta">Analyzed {result.analyzedAt.startDate} {result.analyzedAt.startTime} UTC · live FortyGuard surface model · {routes.length} alternate routes</div>
+              )}
+              {departureLoading && <div className="departure-note">Finding the coolest time to leave…</div>}
+              {departure?.best && (
+                <div className="departure-banner">
+                  <strong>Coolest departure:</strong> {departure.best.label} — {Number(departure.best.temp).toFixed(1)}°C surface
+                  {departure.saving > 0.3 && <span> · {Number(departure.saving).toFixed(1)}°C cooler than now</span>}
+                  {departure.persistenceHours > 0 && <span> · {Number(departure.persistenceHours).toFixed(1)} hrs continuous &gt;35°C today</span>}
+                </div>
               )}
             </div>
           </section>
@@ -279,6 +309,9 @@ export default function App() {
                 <div className="focus-stat"><small>Distance</small><b>{miles(focused.distanceMeters)}</b></div>
                 {(focused.hoursAboveThreshold ?? 0) > 0 && (
                   <div className="focus-stat"><small>Above 35°C</small><b>{Number(focused.hoursAboveThreshold).toFixed(1)} hrs</b></div>
+                )}
+                {(focused.pctAbove35 ?? 0) > 0 && (
+                  <div className="focus-stat"><small>Hot now</small><b>{focused.pctAbove35}% of route</b></div>
                 )}
                 <div className="focus-stat"><small>vs coolest</small><b>{focused.routeId === winner.routeId ? 'Coolest' : `+${Math.max(0, focused.avgTemp - winner.avgTemp).toFixed(1)}°C`}</b></div>
               </div>
