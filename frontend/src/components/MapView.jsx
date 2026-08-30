@@ -17,29 +17,21 @@ const mins = s => Number.isFinite(Number(s)) ? `${Math.round(s / 60)} min` : '�
 const miles = m => fmt(Number(m) / 1609.34);
 
 // react-leaflet v4 ignores `className` in pathOptions, so we stamp styling
-// classes directly onto the rendered SVG paths. We match each leaflet layer to
-// its route by geometry (not DOM order, which puts markers before routes), so
-// the classes always land on the right paths in every focus/hover state.
+// classes directly onto the rendered SVG paths. Each route Polyline carries
+// `routeId` in its pathOptions (merged into layer.options by react-leaflet),
+// so we can match layers to routes reliably — no DOM order, no geometry keys.
 function PathStyler({ routes, coolestRouteId, hoveredRouteId, focusedRouteId }) {
   const map = useMap();
   useEffect(() => {
-    let raf;
-    const isLatLng = p => p && typeof p === 'object' && Number.isFinite(Number(p.lat)) && Number.isFinite(Number(p.lng));
-    // Only Polyline layers return flat LatLng arrays. Heat-grid GeoJSON layers
-    // return nested rings — return null for those so we skip them safely.
-    const keyOf = ll => (Array.isArray(ll) && ll.every(isLatLng))
-      ? JSON.stringify(ll.map(p => [Number(p.lat.toFixed(6)), Number(p.lng.toFixed(6))]))
-      : null;
-    const routeByKey = new Map(
-      (routes || []).map(r => [keyOf((r.geometry?.coordinates || []).map(([lng, lat]) => ({ lat, lng }))), r])
-    );
+    // Use setTimeout instead of requestAnimationFrame: rAF is suspended in
+    // hidden/backgrounded tabs, which would leave routes unstyled while the
+    // user works elsewhere. setTimeout is throttled but always fires.
+    let timer;
     const stamp = () => {
       map.eachLayer(layer => {
-        // Skip non-route layers: TileLayer (no getLatLngs) and CircleMarkers (getRadius).
-        if (typeof layer.getLatLngs !== 'function' || typeof layer.getRadius === 'function') return;
-        const key = keyOf(layer.getLatLngs());
-        if (key == null) return; // nested latlngs (heat grid) or empty
-        const route = routeByKey.get(key);
+        const routeId = layer.options?.routeId;
+        if (routeId == null) return; // not one of our route polylines
+        const route = (routes || []).find(r => r.routeId === routeId);
         const el = layer.getElement();
         if (!route || !el) return;
         const highlighted = focusedRouteId != null ? route.routeId === focusedRouteId : route.routeId === coolestRouteId;
@@ -49,11 +41,11 @@ function PathStyler({ routes, coolestRouteId, hoveredRouteId, focusedRouteId }) 
         else el.classList.add('route-other');
       });
     };
-    const onLayer = () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(stamp); };
+    const onLayer = () => { clearTimeout(timer); timer = setTimeout(stamp, 50); };
     map.on('layeradd layerremove', onLayer);
-    cancelAnimationFrame(raf);
-    raf = requestAnimationFrame(stamp);
-    return () => { map.off('layeradd layerremove', onLayer); cancelAnimationFrame(raf); };
+    clearTimeout(timer);
+    timer = setTimeout(stamp, 50);
+    return () => { map.off('layeradd layerremove', onLayer); clearTimeout(timer); };
   }, [map, routes, coolestRouteId, hoveredRouteId, focusedRouteId]);
   return null;
 }
@@ -118,6 +110,7 @@ export default function MapView({ routes = [], coolestRouteId, origin, destinati
                 lineCap: 'round',
                 lineJoin: 'round',
                 dashArray: '2 9', // every route is born dotted — never solid
+                routeId: route.routeId, // lets PathStyler match layers to routes
               }}
             >
               <Tooltip sticky>
